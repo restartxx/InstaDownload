@@ -1,4 +1,4 @@
-name: Build APK
+name: Build All APKs (Debug)
 
 on:
   push:
@@ -19,13 +19,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build Debug APK
+      - name: Build Debug APKs
         working-directory: InstaDownload
         run: ./gradlew assembleDebug
 
-      - name: Upload APK Artifact
+      - name: Upload All APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: InstaDownload-debug.apk
-          path: InstaDownload/app/build/outputs/apk/debug/app-debug.apk
+          name: InstaDownload-APKs
+          path: InstaDownload/app/build/outputs/apk/**/*.apk
           retention-days: 30
