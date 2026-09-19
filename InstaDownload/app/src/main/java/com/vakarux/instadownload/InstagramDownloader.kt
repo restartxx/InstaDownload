@@ -17,7 +17,11 @@ data class MediaResult(
     val isVideo: Boolean,
     val thumbnailUrl: String? = null,
     val width: Int = 0,
+    val height: Int = 0,
+    val durationSec: Double = 0.0,
     val reduced: Boolean = false,
+    val username: String? = null,
+    val postId: String? = null
 ) {
     val previewUrl: String? get() = thumbnailUrl ?: url.takeIf { !isVideo }
 }
@@ -76,7 +80,13 @@ object InstagramDownloader {
             val s = session ?: throw UnsupportedOperationException(
                 "Stories are login-only. Tap Log in with Instagram, then try again."
             )
-            return tryMediaInfoApi(story.mediaId, s, targetWidth)
+            return tryMediaInfoApi(
+                mediaId = story.mediaId,
+                session = s,
+                targetWidth = targetWidth,
+                fallbackUsername = story.username,
+                fallbackPostId = story.mediaId
+            )
         }
 
         val shortcode = extractShortcode(postUrl) ?: run {
@@ -95,7 +105,12 @@ object InstagramDownloader {
 
         if (session != null) {
             try {
-                return tryMediaInfoApi(shortcodeToMediaId(shortcode), session, targetWidth)
+                return tryMediaInfoApi(
+                    mediaId = shortcodeToMediaId(shortcode),
+                    session = session,
+                    targetWidth = targetWidth,
+                    fallbackPostId = shortcode
+                )
             } catch (e: Exception) {
                 throw Exception(
                     "Could not fetch this post.\n\n" +
@@ -113,7 +128,11 @@ object InstagramDownloader {
     }
 
     private fun tryMediaInfoApi(
-        mediaId: String, session: IgSession, targetWidth: Int
+        mediaId: String,
+        session: IgSession,
+        targetWidth: Int,
+        fallbackUsername: String? = null,
+        fallbackPostId: String? = null
     ): List<MediaResult> {
         val cookie = listOfNotNull(
             "sessionid=${session.sessionId}",
@@ -139,42 +158,82 @@ object InstagramDownloader {
         val item = json.optJSONArray("items")?.optJSONObject(0)
             ?: throw Exception("Media info HTTP ${resp.code}: ${json.optString("message").ifBlank { "no media returned" }}")
 
+        val username = extractUsernameFromProduct(item) ?: fallbackUsername
+        val postId = item.optString("code").takeIf { it.isNotBlank() } ?: fallbackPostId ?: mediaId
+
         item.optJSONArray("carousel_media")?.let { slides ->
             val items = (0 until slides.length()).mapNotNull {
-                slides.optJSONObject(it)?.let { node -> extractSingleStoryItem(node, targetWidth) }
+                slides.optJSONObject(it)?.let { node ->
+                    extractSingleStoryItem(node, targetWidth, username, postId)
+                }
             }
             if (items.isNotEmpty()) return items
         }
-        return extractSingleStoryItem(item, targetWidth)?.let { listOf(it) }
+        return extractSingleStoryItem(item, targetWidth, username, postId)?.let { listOf(it) }
             ?: throw Exception("Media info: no downloadable media")
     }
 
-    private val SIZE_TOKEN = Regex("""_[ps](\d+)x\d+""")
+    private val SIZE_TOKEN = Regex("""_[ps](\d+)x(\d+)""")
 
     private fun JSONObject.renditionWidth(): Int = optInt("width").takeIf { it > 0 }
         ?: SIZE_TOKEN.find(optString("url"))?.groupValues?.get(1)?.toInt() ?: Int.MAX_VALUE
+
+    private fun JSONObject.renditionHeight(): Int = optInt("height").takeIf { it > 0 }
+        ?: SIZE_TOKEN.find(optString("url"))?.groupValues?.get(2)?.toInt() ?: 0
 
     private fun JSONArray?.pick(targetWidth: Int): JSONObject? =
         (0 until (this?.length() ?: 0)).mapNotNull { this?.optJSONObject(it) }
             .filter { it.optString("url").isNotBlank() && !it.optString("url").contains(Regex("stp=c\\d")) }
             .minByOrNull { abs(it.renditionWidth() - targetWidth) }
 
-    private fun extractSingleStoryItem(item: JSONObject, targetWidth: Int): MediaResult? {
+    private fun extractUsernameFromProduct(product: JSONObject): String? {
+        return product.optJSONObject("user")?.optString("username")?.takeIf { it.isNotBlank() }
+            ?: product.optJSONObject("owner")?.optString("username")?.takeIf { it.isNotBlank() }
+            ?: product.optJSONObject("caption")?.optJSONObject("user")?.optString("username")?.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractSingleStoryItem(
+        item: JSONObject,
+        targetWidth: Int,
+        fallbackUsername: String? = null,
+        fallbackPostId: String? = null
+    ): MediaResult? {
         val images = item.optJSONObject("image_versions2")?.optJSONArray("candidates")
         val videos = item.optJSONArray("video_versions")
         val preview = images.pick(minOf(targetWidth, 640))?.optString("url")
             ?: item.optString("display_url").takeIf { it.isNotBlank() }
 
+        val username = extractUsernameFromProduct(item) ?: fallbackUsername
+        val postId = item.optString("code").takeIf { it.isNotBlank() }
+            ?: item.optString("pk").takeIf { it.isNotBlank() }
+            ?: item.optString("id").takeIf { it.isNotBlank() }
+            ?: fallbackPostId
+
         val video = videos.pick(targetWidth)
         val chosen = video ?: images.pick(targetWidth)
-            ?: return preview?.let { MediaResult(it, isVideo = false, thumbnailUrl = it) }
+            ?: return preview?.let {
+                MediaResult(
+                    url = it,
+                    isVideo = false,
+                    thumbnailUrl = it,
+                    username = username,
+                    postId = postId
+                )
+            }
         val best = (if (video != null) videos else images).pick(Int.MAX_VALUE)?.renditionWidth() ?: 0
+        val width = chosen.renditionWidth().takeIf { it < Int.MAX_VALUE } ?: item.optInt("original_width")
+        val height = chosen.renditionHeight().takeIf { it > 0 } ?: item.optInt("original_height")
+
         return MediaResult(
             url = chosen.optString("url"),
             isVideo = video != null,
             thumbnailUrl = preview,
-            width = chosen.renditionWidth(),
-            reduced = chosen.renditionWidth() < best
+            width = width,
+            height = height,
+            durationSec = item.optDouble("video_duration", 0.0),
+            reduced = chosen.renditionWidth() < best,
+            username = username,
+            postId = postId
         )
     }
 
@@ -194,7 +253,12 @@ object InstagramDownloader {
             .find(html)?.groupValues?.get(1)?.replace("&amp;", "&")
             ?: throw Exception("Could not find a profile picture for @$username — the account may not exist")
 
-        return MediaResult(picUrl, isVideo = false)
+        return MediaResult(
+            url = picUrl,
+            isVideo = false,
+            username = username,
+            postId = "profile_pic"
+        )
     }
 
     private fun extractProfileUsername(url: String): String? {
@@ -221,7 +285,7 @@ object InstagramDownloader {
             .findAll(html)
             .mapNotNull { runCatching { JSONObject(it.groupValues[1]) }.getOrNull() }
             .mapNotNull { findPublicProduct(it, expectedMediaId) }
-            .map { extractProductMedia(it, targetWidth) }
+            .map { extractProductMedia(it, targetWidth, shortcode) }
             .firstOrNull { it.isNotEmpty() }
             ?.let { return it }
         throw Exception("Post HTTP ${response.code}: no public media found")
@@ -250,13 +314,22 @@ object InstagramDownloader {
         return null
     }
 
-    private fun extractProductMedia(product: JSONObject, targetWidth: Int): List<MediaResult> {
+    private fun extractProductMedia(
+        product: JSONObject,
+        targetWidth: Int,
+        defaultShortcode: String
+    ): List<MediaResult> {
+        val username = extractUsernameFromProduct(product)
+        val code = product.optString("code").takeIf { it.isNotBlank() } ?: defaultShortcode
+
         product.optJSONArray("carousel_media")?.let { carousel ->
             return (0 until carousel.length()).mapNotNull { i ->
-                carousel.optJSONObject(i)?.let { extractSingleStoryItem(it, targetWidth) }
+                carousel.optJSONObject(i)?.let {
+                    extractSingleStoryItem(it, targetWidth, username, code)
+                }
             }
         }
-        return listOfNotNull(extractSingleStoryItem(product, targetWidth))
+        return listOfNotNull(extractSingleStoryItem(product, targetWidth, username, code))
     }
 
     private fun mediaRequest(url: String) = Request.Builder()
@@ -271,6 +344,11 @@ object InstagramDownloader {
         response.body?.byteStream()?.copyTo(out)
             ?: throw Exception("Empty download body")
     }
+
+    fun contentLength(url: String): Long =
+        client.newCall(mediaRequest(url).newBuilder().head().build()).execute().use {
+            it.header("Content-Length")?.toLongOrNull() ?: -1L
+        }
 
     fun fetchBytes(url: String): ByteArray {
         val response = client.newCall(mediaRequest(url)).execute()
