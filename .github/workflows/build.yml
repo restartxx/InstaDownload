@@ -2,13 +2,14 @@ name: Build All APKs (Debug)
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "stories" ]
     tags:
       - 'v*'
   workflow_dispatch:
 
 jobs:
-  build:
+  build-standard:
+    name: Build Standard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,13 +20,39 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build Debug APKs
+      - name: Build Standard Debug APK
         working-directory: InstaDownload
         run: ./gradlew assembleDebug
 
-      - name: Upload All APK Artifacts
+      - name: Upload Standard APK
         uses: actions/upload-artifact@v4
         with:
-          name: InstaDownload-APKs
+          name: InstaDownload-Standard-debug
+          path: InstaDownload/app/build/outputs/apk/**/*.apk
+          retention-days: 30
+
+  build-stories:
+    name: Build Stories
+    runs-on: ubuntu-latest
+    steps:
+      # Faz o checkout especificamente da branch 'stories'
+      - uses: actions/checkout@v4
+        with:
+          ref: stories
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build Stories Debug APK
+        working-directory: InstaDownload
+        run: ./gradlew assembleDebug
+
+      - name: Upload Stories APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: InstaDownload-Stories-debug
           path: InstaDownload/app/build/outputs/apk/**/*.apk
           retention-days: 30
