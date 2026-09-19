@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -16,7 +17,6 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.format.DateUtils
 import android.text.format.Formatter
-import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,12 +29,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import com.vakarux.instadownload.ui.AppIcons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.vakarux.instadownload.ui.AppIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -232,7 +232,6 @@ class MainActivity : ComponentActivity() {
                 .imePadding()
         ) { innerPadding ->
 
-            // Loading bar — top of screen
             AnimatedVisibility(
                 visible = isLoading,
                 enter = fadeIn(tween(150)),
@@ -260,7 +259,6 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(48.dp))
 
-                // ── Hero ──────────────────────────────────────────
                 Box(
                     modifier = Modifier
                         .size(88.dp)
@@ -298,7 +296,6 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(40.dp))
 
-                // ── Input card ────────────────────────────────────
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(24.dp),
@@ -438,13 +435,27 @@ class MainActivity : ComponentActivity() {
                                             withContext(Dispatchers.IO) {
                                                 itemsToSave.forEachIndexed { i, item ->
                                                     try {
-                                                        saveToDownloads(item.url, item.isVideo, i, context, settings.downloadTreeUri)
+                                                        saveToDownloads(
+                                                            item = item,
+                                                            index = i,
+                                                            totalCount = itemsToSave.size,
+                                                            postUrl = trimmed,
+                                                            context = context,
+                                                            downloadTreeUri = settings.downloadTreeUri
+                                                        )
                                                     } catch (e: Exception) {
                                                         if (settings.downloadTreeUri == null) throw e
                                                         settings.downloadTreeUri = null
                                                         settings.downloadFolderName = AppSettings.DEFAULT_FOLDER_NAME
                                                         fellBackToDefaultFolder = true
-                                                        saveToDownloads(item.url, item.isVideo, i, context, null)
+                                                        saveToDownloads(
+                                                            item = item,
+                                                            index = i,
+                                                            totalCount = itemsToSave.size,
+                                                            postUrl = trimmed,
+                                                            context = context,
+                                                            downloadTreeUri = null
+                                                        )
                                                     }
                                                 }
                                             }
@@ -534,7 +545,6 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ── Preview (inline) ──────────────────────────────
                 AnimatedVisibility(
                     visible = media != null,
                     enter = fadeIn(tween(200)),
@@ -584,7 +594,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // ── Error card (copyable) ─────────────────────────
                 AnimatedVisibility(
                     visible = fullError != null,
                     enter = fadeIn(tween(200)),
@@ -687,7 +696,6 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ── GitHub credit ─────────────────────────────────
                 GitHubCredit()
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -940,110 +948,140 @@ class MainActivity : ComponentActivity() {
         )
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(width = 120.dp, height = 158.dp)) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .size(width = 120.dp, height = 150.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black.copy(alpha = 0.15f))
-                    .clickable(enabled = isCarousel, onClick = onToggleSelected),
-                contentAlignment = Alignment.Center
-            ) {
-                val bmp = bitmap
-                when {
-                    bmp != null -> Image(
-                        bitmap = bmp,
-                        contentDescription = stringResource(
-                            if (item.isVideo) R.string.video_preview_description else R.string.image_preview_description
-                        ),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .alpha(if (isCarousel && !isSelected) 0.35f else 1f)
-                    )
-                    previewUrl == null || loadFailed -> Icon(
-                        imageVector = if (item.isVideo) AppIcons.Movie else AppIcons.Image,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(36.dp)
-                    )
-                    else -> CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                if (item.isVideo && bmp != null) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.45f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = AppIcons.PlayArrow,
+            Box(modifier = Modifier.size(width = 120.dp, height = 158.dp)) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .size(width = 120.dp, height = 150.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black.copy(alpha = 0.15f))
+                        .clickable(enabled = isCarousel, onClick = onToggleSelected),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val bmp = bitmap
+                    when {
+                        bmp != null -> Image(
+                            bitmap = bmp,
+                            contentDescription = stringResource(
+                                if (item.isVideo) R.string.video_preview_description else R.string.image_preview_description
+                            ),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(if (isCarousel && !isSelected) 0.35f else 1f)
+                        )
+                        previewUrl == null || loadFailed -> Icon(
+                            imageVector = if (item.isVideo) AppIcons.Movie else AppIcons.Image,
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(36.dp)
+                        )
+                        else -> CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
                             modifier = Modifier.size(24.dp)
                         )
                     }
+
+                    if (item.isVideo && bmp != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.45f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (isCarousel) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelected() },
+                        colors = CheckboxDefaults.colors(checkedColor = IgPink),
+                        modifier = Modifier.align(Alignment.TopEnd)
+                    )
                 }
             }
-
-            if (isCarousel) {
-                Checkbox(
-                    checked = isSelected,
-                    onCheckedChange = { onToggleSelected() },
-                    colors = CheckboxDefaults.colors(checkedColor = IgPink),
-                    modifier = Modifier.align(Alignment.TopEnd)
+            if (meta.isNotEmpty()) {
+                Text(
+                    meta.joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    modifier = Modifier.width(120.dp).padding(top = 4.dp)
                 )
             }
         }
-        if (meta.isNotEmpty()) {
-            Text(
-                meta.joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                modifier = Modifier.width(120.dp).padding(top = 4.dp)
-            )
-        }
-        }
     }
 
-    // ── Download logic ─────────────────────────────────────────────
+    // ── Lógica de Download e Gerenciamento de Arquivos/Pastas ──────
 
     private fun saveToDownloads(
-        mediaUrl: String,
-        isVideo: Boolean,
+        item: MediaResult,
         index: Int,
+        totalCount: Int,
+        postUrl: String,
         context: Context,
         downloadTreeUri: String?
     ) {
-        val ts = System.currentTimeMillis() + index
-        val fileName = if (isVideo) "instagram_video_$ts.mp4" else "instagram_image_$ts.jpg"
-        val mimeType = if (isVideo) "video/mp4" else "image/jpeg"
+        // 1. Identifica nome do perfil
+        val username = runCatching {
+            item::class.java.getMethod("getUsername").invoke(item) as? String
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: extractUsernameFromUrl(postUrl)
+            ?: "perfil_instagram"
 
+        val cleanUsername = sanitizeFilename(username)
+
+        // 2. Identifica ID do post / shortcode
+        val postId = runCatching {
+            item::class.java.getMethod("getPostId").invoke(item) as? String
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: extractPostIdFromUrl(postUrl)
+            ?: System.currentTimeMillis().toString()
+
+        val cleanPostId = sanitizeFilename(postId)
+
+        // 3. Monta nome do arquivo
+        val ext = if (item.isVideo) "mp4" else "jpg"
+        val mimeType = if (item.isVideo) "video/mp4" else "image/jpeg"
+        val carouselSuffix = if (totalCount > 1) "_${index + 1}" else ""
+        val fileName = "${cleanUsername}_${cleanPostId}${carouselSuffix}.$ext"
+
+        // 4. Salva o arquivo na pasta do perfil correspondente
         if (downloadTreeUri != null) {
+            // Caso tenha selecionado pasta customizada no app (SAF)
             val treeUri = Uri.parse(downloadTreeUri)
-            val parent = DocumentsContract.buildDocumentUriUsingTree(
+            val rootParentUri = DocumentsContract.buildDocumentUriUsingTree(
                 treeUri, DocumentsContract.getTreeDocumentId(treeUri)
             )
+            // Cria/obtém a subpasta com o nome do perfil
+            val profileFolderUri = getOrCreateSubfolder(context, treeUri, rootParentUri, cleanUsername)
+
             val fileUri = DocumentsContract.createDocument(
-                context.contentResolver, parent, mimeType, fileName
+                context.contentResolver, profileFolderUri, mimeType, fileName
             ) ?: throw Exception(context.getString(R.string.error_create_file_in_folder))
+
             context.contentResolver.openOutputStream(fileUri)?.use { out ->
-                InstagramDownloader.downloadToStream(mediaUrl, out)
+                InstagramDownloader.downloadToStream(item.url, out)
             } ?: throw Exception(context.getString(R.string.error_write_to_folder))
+
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Android 10+ (MediaStore Scoped Storage)
+            val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/InstaDownload/$cleanUsername"
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/InstaDownload")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
             val resolver = context.contentResolver
@@ -1051,22 +1089,89 @@ class MainActivity : ComponentActivity() {
             val uri = resolver.insert(collection, values)
                 ?: throw Exception(context.getString(R.string.error_create_file_in_downloads))
             resolver.openOutputStream(uri)?.use { out ->
-                InstagramDownloader.downloadToStream(mediaUrl, out)
+                InstagramDownloader.downloadToStream(item.url, out)
             }
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
+
         } else {
+            // Android 9 ou inferior
             try {
                 val dir = java.io.File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "InstaDownload"
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    "InstaDownload/$cleanUsername"
                 ).apply { mkdirs() }
                 val file = java.io.File(dir, fileName)
-                InstagramDownloader.downloadToStream(mediaUrl, file.outputStream())
+                InstagramDownloader.downloadToStream(item.url, file.outputStream())
             } catch (e: SecurityException) {
                 throw Exception(context.getString(R.string.error_storage_permission_lost), e)
             }
         }
+    }
+
+    // Busca ou cria uma subpasta na pasta selecionada pelo usuário no SAF
+    private fun getOrCreateSubfolder(
+        context: Context,
+        treeUri: Uri,
+        parentUri: Uri,
+        folderName: String
+    ): Uri {
+        val contentResolver = context.contentResolver
+        val parentDocId = DocumentsContract.getDocumentId(parentUri)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        )
+
+        runCatching {
+            contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                val idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+
+                while (cursor.moveToNext()) {
+                    val name = if (nameCol != -1) cursor.getString(nameCol) else null
+                    val mime = if (mimeCol != -1) cursor.getString(mimeCol) else null
+                    if (name.equals(folderName, ignoreCase = true) && mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        val docId = cursor.getString(idCol)
+                        return DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                    }
+                }
+            }
+        }
+
+        return DocumentsContract.createDocument(
+            contentResolver,
+            parentUri,
+            DocumentsContract.Document.MIME_TYPE_DIR,
+            folderName
+        ) ?: throw Exception("Não foi possível criar a pasta do perfil '$folderName'")
+    }
+
+    private fun sanitizeFilename(name: String): String =
+        name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim()
+
+    private fun extractPostIdFromUrl(url: String): String? {
+        val matcher = Pattern.compile("""/(?:p|reel|tv|stories/[^/]+)/([A-Za-z0-9_-]+)""").matcher(url)
+        return if (matcher.find()) matcher.group(1) else null
+    }
+
+    private fun extractUsernameFromUrl(url: String): String? {
+        val storyMatcher = Pattern.compile("""/stories/([A-Za-z0-9._]+)""").matcher(url)
+        if (storyMatcher.find()) return storyMatcher.group(1)
+
+        val profileMatcher = Pattern.compile("""instagram\.com/([A-Za-z0-9._]+)/?""").matcher(url)
+        if (profileMatcher.find()) {
+            val candidate = profileMatcher.group(1)
+            if (candidate !in listOf("p", "reel", "tv", "stories", "explore")) {
+                return candidate
+            }
+        }
+        return null
     }
 
     private fun isValidInstagramUrl(url: String): Boolean =
@@ -1090,7 +1195,6 @@ class MainActivity : ComponentActivity() {
 
     // ── Haptics ────────────────────────────────────────────────────
 
-    // Single crisp tick — download queued
     private fun hapticStart(context: Context, enabled: Boolean = true) {
         if (!enabled) return
         val v = vibrator(context)
@@ -1108,7 +1212,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Light tick then strong click — download finished
     private fun hapticComplete(context: Context, enabled: Boolean = true) {
         if (!enabled) return
         val v = vibrator(context)
