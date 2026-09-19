@@ -19,6 +19,8 @@ data class MediaResult(
     val height: Int = 0,
     val durationSec: Double = 0.0,
     val reduced: Boolean = false,
+    val username: String? = null,
+    val postId: String? = null
 ) {
     val previewUrl: String? get() = thumbnailUrl ?: url.takeIf { !isVideo }
 }
@@ -90,16 +92,38 @@ object InstagramDownloader {
             .filter { it.optString("url").isNotBlank() && !it.optString("url").contains(Regex("stp=c\\d")) }
             .minByOrNull { abs(it.renditionWidth() - targetWidth) }
 
-    private fun extractSingleStoryItem(item: JSONObject, targetWidth: Int): MediaResult? {
+    private fun extractUsernameFromProduct(product: JSONObject): String? {
+        return product.optJSONObject("user")?.optString("username")?.takeIf { it.isNotBlank() }
+            ?: product.optJSONObject("owner")?.optString("username")?.takeIf { it.isNotBlank() }
+            ?: product.optJSONObject("caption")?.optJSONObject("user")?.optString("username")?.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractSingleStoryItem(
+        item: JSONObject,
+        targetWidth: Int,
+        fallbackUsername: String? = null,
+        fallbackPostId: String? = null
+    ): MediaResult? {
         val images = item.optJSONObject("image_versions2")?.optJSONArray("candidates")
         val videos = item.optJSONArray("video_versions")
         val preview = images.pick(minOf(targetWidth, 640))?.optString("url")
             ?: item.optString("display_url").takeIf { it.isNotBlank() }
 
+        val username = extractUsernameFromProduct(item) ?: fallbackUsername
+        val postId = item.optString("code").takeIf { it.isNotBlank() } ?: fallbackPostId
+
         android.util.Log.d("IGDBG", "keys=" + item.keys().asSequence().joinToString() + " vid0=" + videos?.optJSONObject(0) + " img0=" + images?.optJSONObject(0))
         val video = videos.pick(targetWidth)
         val chosen = video ?: images.pick(targetWidth)
-            ?: return preview?.let { MediaResult(it, isVideo = false, thumbnailUrl = it) }
+            ?: return preview?.let {
+                MediaResult(
+                    url = it,
+                    isVideo = false,
+                    thumbnailUrl = it,
+                    username = username,
+                    postId = postId
+                )
+            }
         val best = (if (video != null) videos else images).pick(Int.MAX_VALUE)?.renditionWidth() ?: 0
         val width = chosen.renditionWidth().takeIf { it < Int.MAX_VALUE } ?: item.optInt("original_width")
         val height = chosen.renditionHeight().takeIf { it > 0 } ?: item.optInt("original_height")
@@ -110,7 +134,9 @@ object InstagramDownloader {
             width = width,
             height = height,
             durationSec = item.optDouble("video_duration", 0.0),
-            reduced = chosen.renditionWidth() < best
+            reduced = chosen.renditionWidth() < best,
+            username = username,
+            postId = postId
         )
     }
 
@@ -130,7 +156,12 @@ object InstagramDownloader {
             .find(html)?.groupValues?.get(1)?.replace("&amp;", "&")
             ?: throw Exception("Could not find a profile picture for @$username — the account may not exist")
 
-        return MediaResult(picUrl, isVideo = false)
+        return MediaResult(
+            url = picUrl,
+            isVideo = false,
+            username = username,
+            postId = "profile_pic"
+        )
     }
 
     private fun extractProfileUsername(url: String): String? {
@@ -157,7 +188,7 @@ object InstagramDownloader {
             .findAll(html)
             .mapNotNull { runCatching { JSONObject(it.groupValues[1]) }.getOrNull() }
             .mapNotNull { findPublicProduct(it, expectedMediaId) }
-            .map { extractProductMedia(it, targetWidth) }
+            .map { extractProductMedia(it, targetWidth, shortcode) }
             .firstOrNull { it.isNotEmpty() }
             ?.let { return it }
         throw Exception("Post HTTP ${response.code}: no public media found")
@@ -186,13 +217,22 @@ object InstagramDownloader {
         return null
     }
 
-    private fun extractProductMedia(product: JSONObject, targetWidth: Int): List<MediaResult> {
+    private fun extractProductMedia(
+        product: JSONObject,
+        targetWidth: Int,
+        defaultShortcode: String
+    ): List<MediaResult> {
+        val username = extractUsernameFromProduct(product)
+        val code = product.optString("code").takeIf { it.isNotBlank() } ?: defaultShortcode
+
         product.optJSONArray("carousel_media")?.let { carousel ->
             return (0 until carousel.length()).mapNotNull { i ->
-                carousel.optJSONObject(i)?.let { extractSingleStoryItem(it, targetWidth) }
+                carousel.optJSONObject(i)?.let {
+                    extractSingleStoryItem(it, targetWidth, username, code)
+                }
             }
         }
-        return listOfNotNull(extractSingleStoryItem(product, targetWidth))
+        return listOfNotNull(extractSingleStoryItem(product, targetWidth, username, code))
     }
 
     private fun shortcodeToMediaId(shortcode: String): String {
