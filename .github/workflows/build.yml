@@ -2,7 +2,7 @@ name: Build & Release
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, stories ]
     tags: [ 'v*' ]
   workflow_dispatch:
 
@@ -24,29 +24,21 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x InstaDownload/gradlew
 
-      - name: Decode signing keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > InstaDownload/app/release.jks
-
-      - name: Build release APK
+      - name: Build Debug APK
         working-directory: InstaDownload
-        run: |
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$(pwd)/app/release.jks \
-            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
-            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaDownload-${{ github.ref_name }}
-          path: InstaDownload/app/build/outputs/apk/release/app-release.apk
+          name: InstaDownload-${{ github.ref_name }}-debug
+          path: InstaDownload/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: InstaDownload/app/build/outputs/apk/release/app-release.apk
+          files: InstaDownload/app/build/outputs/apk/debug/app-debug.apk
           name: InstaDownload ${{ github.ref_name }}
           generate_release_notes: true
